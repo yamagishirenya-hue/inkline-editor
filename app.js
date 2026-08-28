@@ -144,6 +144,8 @@ const externalDismissBtn = document.getElementById("externalDismissBtn");
 // ===================== 初期化 =====================
 init();
 
+let restorePromise = null;
+
 async function init() {
   applyStoredTheme();
   applyStoredWrap();
@@ -151,17 +153,21 @@ async function init() {
   registerServiceWorker();
   bindStaticEvents();
 
-  // OS / Chromebook からファイルが開かれた時の受け取り処理（最優先で登録）
+  // 1. OSからのファイル受け取り(launchQueue)をアプリ起動時に最優先で登録
   if ("launchQueue" in window) {
     window.launchQueue.setConsumer(async (launchParams) => {
       if (!launchParams.files || launchParams.files.length === 0) return;
+      // セッション復元中の場合は完了を待ってからファイルを開く
+      if (restorePromise) await restorePromise;
       for (const handle of launchParams.files) {
         await openFileHandleInNewTab(handle);
       }
     });
   }
 
-  await restoreSession();
+  // 2. セッション復元を非同期で開始
+  restorePromise = restoreSession();
+  await restorePromise;
   renderRecentMenu();
 
   window.addEventListener("focus", () => {
@@ -394,7 +400,11 @@ function saveEditorStateToTab(tab) {
 
 async function switchTab(id) {
   const current = getActiveTab();
-  saveEditorStateToTab(current);
+  
+  // 別のタブへ切替える時のみ現在の画面状態を保存する
+  if (current && current.id !== id) {
+    saveEditorStateToTab(current);
+  }
 
   activeTabId = id;
   const next = getActiveTab();
@@ -427,6 +437,7 @@ async function switchTab(id) {
   }
 }
 
+// ===================== タブ閉じる =====================
 function closeTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
@@ -437,12 +448,25 @@ function closeTab(id) {
     return;
   }
 
+  // 最後の1つのタブを閉じる場合
   if (tabs.length === 1) {
     tab.isDirty = false;
+    tabs = [];
+    renderTabs();
+    editor.value = "";
+    updateGutter();
+    updateCounters();
+    
+    // セッション状態をクリア
     dbSet("tabs", []);
+    dbSet("activeTabId", null);
+
+    // ウィンドウを閉じる
     window.close();
+
+    // OSやブラウザのセキュリティ制限で window.close() がブロックされた場合のみメッセージ表示
     setTimeout(() => {
-      setStatus("このウィンドウは自動で閉じられませんでした。手動で閉じてください。", true);
+      setStatus("ウィンドウを閉じるには右上の「×」ボタンを押してください", true);
     }, 300);
     return;
   }
@@ -1004,6 +1028,7 @@ async function openRawFileInNewTab(file) {
 saveBtn.addEventListener("click", () => saveFile(false));
 saveAsBtn.addEventListener("click", () => saveFile(true));
 
+// ===================== ファイル保存 =====================
 async function saveFile(forceSaveAs) {
   const tab = getActiveTab();
   if (!tab) return;
@@ -1017,7 +1042,13 @@ async function saveFile(forceSaveAs) {
 
   try {
     if (!tab.fileHandle || forceSaveAs) {
-      const ext = tab.name.includes(".") ? tab.name.split(".").pop().toLowerCase() : "txt";
+      // 拡張子が含まれていない場合は自動で .txt を付与
+      let suggestedName = tab.name || "無題のファイル.txt";
+      if (!suggestedName.includes(".")) {
+        suggestedName += ".txt";
+      }
+
+      const ext = suggestedName.split(".").pop().toLowerCase();
       const mimeTypes = {
         js: { "text/javascript": [".js"] },
         html: { "text/html": [".html", ".htm"] },
@@ -1029,7 +1060,7 @@ async function saveFile(forceSaveAs) {
       const acceptObj = mimeTypes[ext] || { "text/plain": [`.${ext}`] };
 
       tab.fileHandle = await window.showSaveFilePicker({
-        suggestedName: tab.name || "無題のファイル.txt",
+        suggestedName: suggestedName,
         types: [{ description: "ファイル", accept: acceptObj }],
       });
     }
