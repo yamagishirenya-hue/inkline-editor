@@ -144,6 +144,8 @@ const externalDismissBtn = document.getElementById("externalDismissBtn");
 // ===================== 初期化 =====================
 init();
 
+let restorePromise = null;
+
 async function init() {
   applyStoredTheme();
   applyStoredWrap();
@@ -151,17 +153,21 @@ async function init() {
   registerServiceWorker();
   bindStaticEvents();
 
-  // OS / Chromebook からファイルが開かれた時の受け取り処理（最優先で登録）
+  // 1. OSからのファイル受け取り(launchQueue)をアプリ起動時に最優先で登録
   if ("launchQueue" in window) {
     window.launchQueue.setConsumer(async (launchParams) => {
       if (!launchParams.files || launchParams.files.length === 0) return;
+      // セッション復元中の場合は完了を待ってからファイルを開く
+      if (restorePromise) await restorePromise;
       for (const handle of launchParams.files) {
         await openFileHandleInNewTab(handle);
       }
     });
   }
 
-  await restoreSession();
+  // 2. セッション復元を非同期で開始
+  restorePromise = restoreSession();
+  await restorePromise;
   renderRecentMenu();
 
   window.addEventListener("focus", () => {
