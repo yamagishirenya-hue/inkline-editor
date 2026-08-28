@@ -13,6 +13,13 @@
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --display: "Inter", sans-serif;
   --editor-font-size: 13px;
+  --tok-comment: #8b8d94;
+  --tok-string: #1a7f37;
+  --tok-number: #b8860b;
+  --tok-keyword: #8250df;
+  --tok-function: #0550ae;
+  --tok-tag: #c2185b;
+  --tok-attr: #00796b;
 }
 
 [data-theme="dark"] {
@@ -27,6 +34,13 @@
   --danger: #ef6a5c;
   --warn: #e0b84a;
   --warn-soft: #3a3320;
+  --tok-comment: #82858c;
+  --tok-string: #7ee787;
+  --tok-number: #e0b84a;
+  --tok-keyword: #d2a8ff;
+  --tok-function: #79c0ff;
+  --tok-tag: #ff7b9c;
+  --tok-attr: #56d4c4;
 }
 
 * {
@@ -539,13 +553,62 @@ body {
   user-select: none;
 }
 
-.editor {
+.editor-col {
+  position: relative;
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.highlight-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 18px 20px;
+  font-family: var(--mono);
+  font-size: var(--editor-font-size);
+  line-height: 1.7;
+  white-space: pre;
+  tab-size: 2;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  background: transparent;
+}
+
+.highlight-layer code {
+  font: inherit;
+  color: inherit;
+  white-space: inherit;
+}
+
+.highlight-layer.wrap-on {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-string { color: var(--tok-string); }
+.tok-number { color: var(--tok-number); }
+.tok-keyword { color: var(--tok-keyword); font-weight: 600; }
+.tok-function { color: var(--tok-function); }
+.tok-tag { color: var(--tok-tag); }
+.tok-attr { color: var(--tok-attr); }
+.tok-key { color: var(--tok-attr); }
+.tok-heading { color: var(--accent); font-weight: 600; }
+.tok-link { color: var(--accent); }
+
+.editor {
+  position: absolute;
+  inset: 0;
   resize: none;
   border: none;
   outline: none;
-  background: var(--bg);
-  color: var(--text);
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
   font-family: var(--mono);
   font-size: var(--editor-font-size);
   line-height: 1.7;
@@ -562,6 +625,10 @@ body {
 
 .editor::placeholder {
   color: var(--text-dim);
+}
+
+.editor::selection {
+  background: var(--accent-soft);
 }
 
 .md-preview {

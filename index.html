@@ -229,14 +229,17 @@
     <!-- エディタ本体 -->
     <div class="editor-wrap">
       <div id="gutter" class="gutter"></div>
-      <textarea
-        id="editor"
-        class="editor"
-        spellcheck="false"
-        autocapitalize="off"
-        autocomplete="off"
-        placeholder="ここに書き始めてください…"
-      ></textarea>
+      <div class="editor-col">
+        <pre id="highlightLayer" class="highlight-layer" aria-hidden="true"><code id="highlightCode"></code></pre>
+        <textarea
+          id="editor"
+          class="editor"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          placeholder="ここに書き始めてください…"
+        ></textarea>
+      </div>
       <div id="mdPreview" class="md-preview" hidden></div>
     </div>
 

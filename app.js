@@ -74,6 +74,8 @@ function getActiveTab() {
 // ===================== DOM =====================
 const editor = document.getElementById("editor");
 const gutter = document.getElementById("gutter");
+const highlightLayer = document.getElementById("highlightLayer");
+const highlightCode = document.getElementById("highlightCode");
 const mdPreview = document.getElementById("mdPreview");
 const tabbar = document.getElementById("tabbar");
 const addTabBtn = document.getElementById("addTabBtn");
@@ -142,9 +144,9 @@ const externalReloadBtn = document.getElementById("externalReloadBtn");
 const externalDismissBtn = document.getElementById("externalDismissBtn");
 
 // ===================== 初期化 =====================
-init();
-
 let restorePromise = null;
+
+init();
 
 async function init() {
   applyStoredTheme();
@@ -249,6 +251,7 @@ function applyStoredTheme() {
 function applyStoredWrap() {
   const on = localStorage.getItem("inkline-wrap") === "1";
   editor.classList.toggle("wrap-on", on);
+  highlightLayer.classList.toggle("wrap-on", on);
 }
 
 function applyStoredFontSize() {
@@ -386,6 +389,7 @@ async function renameTab(tab, newName) {
     setStatus("タブ名を変更しました");
   }
 
+  if (tab.id === activeTabId) updateHighlight();
   renderTabs();
   scheduleSaveSession();
 }
@@ -414,6 +418,7 @@ async function switchTab(id) {
   editor.scrollTop = next.scrollTop;
   editor.setSelectionRange(next.selectionStart, next.selectionEnd);
   gutter.scrollTop = next.scrollTop;
+  highlightLayer.scrollTop = next.scrollTop;
 
   renderTabs();
   updateGutter();
@@ -641,6 +646,7 @@ function bindStaticEvents() {
 
   wrapBtn.addEventListener("click", () => {
     const on = editor.classList.toggle("wrap-on");
+    highlightLayer.classList.toggle("wrap-on", on);
     localStorage.setItem("inkline-wrap", on ? "1" : "0");
     setStatus(on ? "折り返し: ON" : "折り返し: OFF");
   });
@@ -1224,6 +1230,8 @@ editor.addEventListener("click", () => {
 editor.addEventListener("select", updateSelectionInfo);
 editor.addEventListener("scroll", () => {
   gutter.scrollTop = editor.scrollTop;
+  highlightLayer.scrollTop = editor.scrollTop;
+  highlightLayer.scrollLeft = editor.scrollLeft;
 });
 
 function setTabDirty(tab, dirty) {
@@ -1242,6 +1250,121 @@ function updateGutter() {
   let out = "";
   for (let i = 1; i <= lines; i++) out += i + "\n";
   gutter.textContent = out;
+  updateHighlight();
+}
+
+// ===================== シンタックスハイライト =====================
+function escapeHtmlForHighlight(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const LANG_RULES = {
+  javascript: [
+    { type: "comment", re: /\/\/[^\n]*|\/\*[\s\S]*?\*\// },
+    { type: "string", re: /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/ },
+    { type: "number", re: /\b0[xX][0-9a-fA-F]+\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/ },
+    {
+      type: "keyword",
+      re: /\b(?:const|let|var|function|return|if|else|for|while|do|switch|case|default|break|continue|class|extends|new|this|super|import|export|from|as|async|await|try|catch|finally|throw|typeof|instanceof|in|of|null|undefined|true|false|void|yield|static|get|set|delete)\b/,
+    },
+    { type: "function", re: /\b[A-Za-z_$][\w$]*(?=\s*\()/ },
+  ],
+  json: [
+    { type: "key", re: /"(?:\\.|[^"\\])*"(?=\s*:)/ },
+    { type: "string", re: /"(?:\\.|[^"\\])*"/ },
+    { type: "number", re: /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/ },
+    { type: "keyword", re: /\b(?:true|false|null)\b/ },
+  ],
+  css: [
+    { type: "comment", re: /\/\*[\s\S]*?\*\// },
+    { type: "string", re: /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/ },
+    { type: "attr", re: /[A-Za-z-]+(?=\s*:)/ },
+    { type: "attr", re: /@[A-Za-z-]+/ },
+    { type: "number", re: /-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|vmin|vmax|deg|s|ms)?\b/ },
+    { type: "tag", re: /[.#][A-Za-z_-][\w-]*/ },
+  ],
+  markup: [
+    { type: "comment", re: /<!--[\s\S]*?-->/ },
+    { type: "string", re: /"[^"]*"|'[^']*'/ },
+    { type: "tag", re: /<\/?[A-Za-z][\w-]*|\/?>/ },
+    { type: "attr", re: /[A-Za-z-]+(?=\s*=)/ },
+  ],
+  markdown: [
+    { type: "comment", re: /`[^`\n]+`/ },
+    { type: "heading", re: /^#{1,6}[^\n]*/ },
+    { type: "keyword", re: /\*\*[^*\n]+\*\*|__[^_\n]+__/ },
+    { type: "string", re: /\*[^*\n]+\*|_[^_\n]+_/ },
+    { type: "link", re: /\[[^\]\n]*\]\([^)\n]*\)/ },
+    { type: "comment", re: /^>[^\n]*/ },
+  ],
+};
+
+const EXT_LANG_MAP = {
+  js: "javascript",
+  mjs: "javascript",
+  json: "json",
+  css: "css",
+  html: "markup",
+  htm: "markup",
+  md: "markdown",
+  markdown: "markdown",
+};
+
+const TOKENIZER_CACHE = {};
+
+function getTokenizer(lang) {
+  const rules = LANG_RULES[lang];
+  if (!rules) return null;
+  if (TOKENIZER_CACHE[lang]) return TOKENIZER_CACHE[lang];
+
+  const combined = new RegExp(rules.map((r) => `(${r.re.source})`).join("|"), "gm");
+
+  const tokenize = (text) => {
+    let html = "";
+    let lastIndex = 0;
+    let m;
+    combined.lastIndex = 0;
+    while ((m = combined.exec(text))) {
+      if (m.index > lastIndex) {
+        html += escapeHtmlForHighlight(text.slice(lastIndex, m.index));
+      }
+      let type = "plain";
+      for (let i = 0; i < rules.length; i++) {
+        if (m[i + 1] !== undefined) {
+          type = rules[i].type;
+          break;
+        }
+      }
+      html += `<span class="tok-${type}">${escapeHtmlForHighlight(m[0])}</span>`;
+      lastIndex = m.index + m[0].length;
+      if (m[0].length === 0) combined.lastIndex += 1;
+    }
+    if (lastIndex < text.length) {
+      html += escapeHtmlForHighlight(text.slice(lastIndex));
+    }
+    return html;
+  };
+
+  TOKENIZER_CACHE[lang] = tokenize;
+  return tokenize;
+}
+
+function detectLanguage(filename) {
+  if (!filename) return null;
+  const dot = filename.lastIndexOf(".");
+  if (dot === -1) return null;
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return EXT_LANG_MAP[ext] || null;
+}
+
+function updateHighlight() {
+  const tab = getActiveTab();
+  const lang = detectLanguage(tab ? tab.name : "");
+  const tokenize = lang ? getTokenizer(lang) : null;
+  const text = editor.value;
+  highlightCode.innerHTML = (tokenize ? tokenize(text) : escapeHtmlForHighlight(text)) + "\n";
+  highlightLayer.scrollTop = editor.scrollTop;
+  highlightLayer.scrollLeft = editor.scrollLeft;
 }
 
 // ===================== カウンター類 =====================
@@ -1421,6 +1544,7 @@ function scrollSelectionIntoView() {
   const line = before.split("\n").length;
   editor.scrollTop = Math.max(0, (line - 4) * lineHeight);
   gutter.scrollTop = editor.scrollTop;
+  highlightLayer.scrollTop = editor.scrollTop;
 }
 
 replaceBtn.addEventListener("click", () => {
