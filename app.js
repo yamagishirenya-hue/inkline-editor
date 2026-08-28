@@ -898,7 +898,10 @@ openBtn.addEventListener("click", async () => {
       types: [
         {
           description: "テキストファイル",
-          accept: { "text/plain": [".txt", ".md", ".log", ".csv", ".json"] },
+          accept: { "text/plain": [".txt", ".md", ".log", ".csv", ".json"] 
+                    "text/html": [".html", ".htm"],
+                    "text/javascript": [".js"],
+                    "text/css": [".css"]},
         },
       ],
     });
