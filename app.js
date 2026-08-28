@@ -437,6 +437,7 @@ async function switchTab(id) {
   }
 }
 
+// ===================== タブ閉じる =====================
 function closeTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
@@ -447,13 +448,18 @@ function closeTab(id) {
     return;
   }
 
+  // 最後の1つのタブを閉じる場合
   if (tabs.length === 1) {
     tab.isDirty = false;
     dbSet("tabs", []);
     window.close();
+
+    // OS制限で window.close() がブロックされた場合は、画面上のタブを新規の空タブにリセットする
     setTimeout(() => {
-      setStatus("このウィンドウは自動で閉じられませんでした。手動で閉じてください。", true);
-    }, 300);
+      tabs = [];
+      createNewTab();
+      setStatus("新規ファイルを作成しました");
+    }, 150);
     return;
   }
 
@@ -468,7 +474,6 @@ function closeTab(id) {
   }
   scheduleSaveSession();
 }
-
 addTabBtn.addEventListener("click", createNewTab);
 newBtn.addEventListener("click", createNewTab);
 
@@ -1014,6 +1019,7 @@ async function openRawFileInNewTab(file) {
 saveBtn.addEventListener("click", () => saveFile(false));
 saveAsBtn.addEventListener("click", () => saveFile(true));
 
+// ===================== ファイル保存 =====================
 async function saveFile(forceSaveAs) {
   const tab = getActiveTab();
   if (!tab) return;
@@ -1027,7 +1033,13 @@ async function saveFile(forceSaveAs) {
 
   try {
     if (!tab.fileHandle || forceSaveAs) {
-      const ext = tab.name.includes(".") ? tab.name.split(".").pop().toLowerCase() : "txt";
+      // 拡張子が含まれていない場合は自動で .txt を付与
+      let suggestedName = tab.name || "無題のファイル.txt";
+      if (!suggestedName.includes(".")) {
+        suggestedName += ".txt";
+      }
+
+      const ext = suggestedName.split(".").pop().toLowerCase();
       const mimeTypes = {
         js: { "text/javascript": [".js"] },
         html: { "text/html": [".html", ".htm"] },
@@ -1039,7 +1051,7 @@ async function saveFile(forceSaveAs) {
       const acceptObj = mimeTypes[ext] || { "text/plain": [`.${ext}`] };
 
       tab.fileHandle = await window.showSaveFilePicker({
-        suggestedName: tab.name || "無題のファイル.txt",
+        suggestedName: suggestedName,
         types: [{ description: "ファイル", accept: acceptObj }],
       });
     }
