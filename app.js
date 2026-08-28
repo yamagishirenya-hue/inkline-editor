@@ -50,7 +50,7 @@ let sessionSaveTimer = null;
 let tabCounter = 0;
 let lastTitleClick = { id: null, time: 0 };
 
-function makeTab(opts) {
+function makeTab(opts = {}) {
   tabCounter += 1;
   return {
     id: opts.id || `tab-${Date.now()}-${tabCounter}`,
@@ -159,6 +159,7 @@ async function init() {
     if (tab && tab.fileHandle) checkExternalChange(tab);
   });
 
+  // OS / Chromebook の File Handling API からファイルが開かれた時の読み込み処理
   if ("launchQueue" in window) {
     window.launchQueue.setConsumer(async (launchParams) => {
       if (!launchParams.files || launchParams.files.length === 0) return;
@@ -188,7 +189,7 @@ async function restoreSession() {
         content: t.content,
         originalContent: t.content,
         fileHandle: t.fileHandle || null,
-        isDirty: false, // 復元直後は「保存済み」扱い(内容はそのまま復元されるため)
+        isDirty: false,
         encoding: t.encoding || "UTF-8",
         lastKnownModified: t.lastKnownModified || null,
       })
@@ -402,7 +403,6 @@ async function switchTab(id) {
   hideExternalChangeBar();
   editor.focus();
 
-  // 権限が必要な復元済みタブなら、ここでユーザー操作を伴って許可を要求する
   if (next.fileHandle) {
     try {
       const granted = await verifyPermission(next.fileHandle);
@@ -412,7 +412,7 @@ async function switchTab(id) {
         setStatus("このファイルへのアクセス許可が必要です(保存時に再度確認されます)", true);
       }
     } catch {
-      // 権限確認自体に失敗した場合は無視(オフライン等)
+      // 権限確認エラー時は無視
     }
   }
 }
@@ -427,7 +427,6 @@ function closeTab(id) {
     return;
   }
 
-  // 最後の1つのタブを閉じる場合は、アプリ自体を終了する
   if (tabs.length === 1) {
     tab.isDirty = false;
     dbSet("tabs", []);
@@ -479,7 +478,6 @@ function setupMenuToggle(btn, menu) {
   });
 }
 
-// メニューが画面外にはみ出さないよう、表示位置を補正する
 function clampMenuPosition(menu) {
   const margin = 8;
   const rect = menu.getBoundingClientRect();
@@ -493,10 +491,6 @@ function clampMenuPosition(menu) {
   }
   menu.style.transform = dx ? `translateX(${dx}px)` : "";
 
-  // 縦方向に本当に収まりきらない時だけスクロールを有効にする。
-  // overflow-y だけを常時指定すると、CSSの仕様で overflow-x も
-  // 自動的に「はみ出しを隠す」扱いになり、右に開くサブメニューが
-  // 見えなくなってしまうため、必要な場合のみ設定する。
   const availableHeight = window.innerHeight - rect.top - margin;
   if (rect.height > availableHeight) {
     menu.style.maxHeight = `${Math.max(160, availableHeight)}px`;
@@ -507,7 +501,6 @@ function clampMenuPosition(menu) {
   }
 }
 
-// ツールメニューのカテゴリ: ホバー/タップでサブメニューを開閉する
 function setupToolsCategories() {
   const categories = toolsMenu.querySelectorAll(".menu-category");
   categories.forEach((cat) => {
@@ -528,7 +521,6 @@ function setupToolsCategories() {
     });
 
     cat.addEventListener("click", (e) => {
-      // サブメニュー内の項目クリックはそちらのハンドラに任せる(タブレット/タッチ対応)
       if (e.target.closest(".menu-item")) return;
       const isOpen = cat.classList.contains("open");
       categories.forEach((c) => c.classList.remove("open"));
@@ -540,22 +532,16 @@ function setupToolsCategories() {
   });
 }
 
-// サブメニューを画面上の絶対座標(position: fixed)で配置する。
-// position: absolute だと、祖先要素(body の overflow: hidden など)に
-// よってウィンドウ幅が足りない時にはみ出た部分が切り取られて見えなく
-// なる問題があったため、視点(viewport)基準の座標で直接指定する。
 function positionSubmenu(cat, submenu) {
   const margin = 8;
   const catRect = cat.getBoundingClientRect();
 
-  // 一旦カテゴリの右側を基準に仮配置してサイズを測る
   submenu.style.top = `${catRect.top - 6}px`;
   submenu.style.left = `${catRect.right + 6}px`;
   const rect = submenu.getBoundingClientRect();
 
   let left = catRect.right + 6;
   if (left + rect.width > window.innerWidth - margin) {
-    // 右に入りきらない場合は左側に開く
     left = catRect.left - rect.width - 6;
   }
   if (left < margin) left = margin;
@@ -640,13 +626,12 @@ function bindStaticEvents() {
     const tab = getActiveTab();
     hideExternalChangeBar();
     if (!tab || !tab.fileHandle) return;
-    // 「確認した」ことを記録し、同じ変更で再度通知が出ないようにする
     try {
       const file = await tab.fileHandle.getFile();
       tab.lastKnownModified = file.lastModified;
       scheduleSaveSession();
     } catch {
-      // 取得できない場合は何もしない(次回フォーカス時に再確認される)
+      // 無視
     }
   });
 
@@ -659,6 +644,29 @@ function bindStaticEvents() {
 
   columnCloseBtn.addEventListener("click", () => (columnPanel.hidden = true));
   colApplyBtn.addEventListener("click", applyColumnEdit);
+
+  // ドラッグ＆ドロップによるファイル読み込み対応
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    if (!e.dataTransfer) return;
+
+    if (e.dataTransfer.items) {
+      for (const item of e.dataTransfer.items) {
+        if (item.kind === "file") {
+          if (typeof item.getAsFileSystemHandle === "function") {
+            const handle = await item.getAsFileSystemHandle();
+            if (handle && handle.kind === "file") {
+              await openFileHandleInNewTab(handle);
+              continue;
+            }
+          }
+          const file = item.getAsFile();
+          if (file) await openRawFileInNewTab(file);
+        }
+      }
+    }
+  });
 }
 
 // ===================== ツール(文字変換・行操作) =====================
@@ -897,11 +905,13 @@ openBtn.addEventListener("click", async () => {
       multiple: true,
       types: [
         {
-          description: "テキストファイル",
-          accept: { "text/plain": [".txt", ".md", ".log", ".csv", ".json"] 
-                    "text/html": [".html", ".htm"],
-                    "text/javascript": [".js"],
-                    "text/css": [".css"]},
+          description: "サポートしているファイル",
+          accept: {
+            "text/plain": [".txt", ".md", ".log", ".csv", ".json"],
+            "text/html": [".html", ".htm"],
+            "text/javascript": [".js"],
+            "text/css": [".css"]
+          },
         },
       ],
     });
@@ -951,6 +961,34 @@ async function openFileHandleInNewTab(handle) {
   }
 }
 
+// 通常のFileオブジェクトから新規タブで開く処理（Drag & Drop用）
+async function openRawFileInNewTab(file) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const { text, encoding } = decodeBuffer(buffer);
+
+    const blank = tabs.find((t) => !t.fileHandle && !t.isDirty && t.content === "" && t.id !== activeTabId);
+    const activeIsBlank = getActiveTab() && !getActiveTab().fileHandle && !getActiveTab().isDirty && getActiveTab().content === "" && tabs.length === 1;
+
+    let tab = activeIsBlank ? getActiveTab() : (blank || makeTab({ name: file.name }));
+    if (!activeIsBlank && !blank) tabs.push(tab);
+
+    tab.name = file.name;
+    tab.content = text;
+    tab.originalContent = text;
+    tab.fileHandle = null;
+    tab.isDirty = false;
+    tab.encoding = encoding;
+
+    switchTab(tab.id);
+    setStatus(`「${file.name}」を開きました(${encoding})`);
+    scheduleSaveSession();
+  } catch (err) {
+    console.error(err);
+    setStatus("ファイルを開けませんでした", true);
+  }
+}
+
 saveBtn.addEventListener("click", () => saveFile(false));
 saveAsBtn.addEventListener("click", () => saveFile(true));
 
@@ -967,9 +1005,20 @@ async function saveFile(forceSaveAs) {
 
   try {
     if (!tab.fileHandle || forceSaveAs) {
+      const ext = tab.name.includes(".") ? tab.name.split(".").pop().toLowerCase() : "txt";
+      const mimeTypes = {
+        js: { "text/javascript": [".js"] },
+        html: { "text/html": [".html", ".htm"] },
+        css: { "text/css": [".css"] },
+        json: { "application/json": [".json"] },
+        txt: { "text/plain": [".txt"] },
+        md: { "text/markdown": [".md"] }
+      };
+      const acceptObj = mimeTypes[ext] || { "text/plain": [`.${ext}`] };
+
       tab.fileHandle = await window.showSaveFilePicker({
-        suggestedName: tab.fileHandle ? tab.name : "無題のファイル.txt",
-        types: [{ description: "テキストファイル", accept: { "text/plain": [".txt"] } }],
+        suggestedName: tab.name || "無題のファイル.txt",
+        types: [{ description: "ファイル", accept: acceptObj }],
       });
     }
     const writable = await tab.fileHandle.createWritable();
@@ -981,7 +1030,7 @@ async function saveFile(forceSaveAs) {
     tab.name = tab.fileHandle.name;
     tab.lastKnownModified = savedFile.lastModified;
     const wasNonUtf8 = tab.encoding !== "UTF-8";
-    tab.encoding = "UTF-8"; // File System Access APIの書き込みはUTF-8になる
+    tab.encoding = "UTF-8";
 
     setTabDirty(tab, false);
     updateEncodingLabel();
@@ -1003,7 +1052,7 @@ function downloadFallback(tab, text) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = tab.name.endsWith(".txt") ? tab.name : `${tab.name}.txt`;
+  a.download = tab.name.includes(".") ? tab.name : `${tab.name}.txt`;
   a.click();
   URL.revokeObjectURL(url);
   tab.originalContent = text;
@@ -1026,7 +1075,7 @@ async function checkExternalChange(tab) {
       }
     }
   } catch {
-    // アクセスできない場合は静かに無視
+    // 静かに無視
   }
 }
 
@@ -1196,13 +1245,10 @@ function updateBracketInfo() {
   const charBefore = text[pos - 1];
 
   let matchIndex = -1;
-  let originIndex = -1;
 
   if (charAfter && OPEN_BRACKETS[charAfter]) {
-    originIndex = pos;
     matchIndex = findMatchingBracket(text, pos, charAfter, OPEN_BRACKETS[charAfter], 1);
   } else if (charBefore && CLOSE_BRACKETS[charBefore]) {
-    originIndex = pos - 1;
     matchIndex = findMatchingBracket(text, pos - 1, charBefore, CLOSE_BRACKETS[charBefore], -1);
   }
 
