@@ -394,7 +394,11 @@ function saveEditorStateToTab(tab) {
 
 async function switchTab(id) {
   const current = getActiveTab();
-  saveEditorStateToTab(current);
+  
+  // 【修正点】別のタブへ切替える時のみ現在の画面状態を保存する（同じタブの場合は上書き保存をスキップ）
+  if (current && current.id !== id) {
+    saveEditorStateToTab(current);
+  }
 
   activeTabId = id;
   const next = getActiveTab();
