@@ -151,15 +151,7 @@ async function init() {
   registerServiceWorker();
   bindStaticEvents();
 
-  await restoreSession();
-  renderRecentMenu();
-
-  window.addEventListener("focus", () => {
-    const tab = getActiveTab();
-    if (tab && tab.fileHandle) checkExternalChange(tab);
-  });
-
-  // OS / Chromebook の File Handling API からファイルが開かれた時の読み込み処理
+  // OS / Chromebook からファイルが開かれた時の受け取り処理（最優先で登録）
   if ("launchQueue" in window) {
     window.launchQueue.setConsumer(async (launchParams) => {
       if (!launchParams.files || launchParams.files.length === 0) return;
@@ -168,6 +160,14 @@ async function init() {
       }
     });
   }
+
+  await restoreSession();
+  renderRecentMenu();
+
+  window.addEventListener("focus", () => {
+    const tab = getActiveTab();
+    if (tab && tab.fileHandle) checkExternalChange(tab);
+  });
 }
 
 function registerServiceWorker() {
@@ -178,11 +178,12 @@ function registerServiceWorker() {
 
 // ===================== セッション復元 =====================
 async function restoreSession() {
+  const fileAlreadyLoaded = tabs.length > 0;
   const saved = await dbGet("tabs");
   const savedActiveId = await dbGet("activeTabId");
 
   if (Array.isArray(saved) && saved.length > 0) {
-    tabs = saved.map((t) =>
+    const restoredTabs = saved.map((t) =>
       makeTab({
         id: t.id,
         name: t.name,
@@ -194,10 +195,19 @@ async function restoreSession() {
         lastKnownModified: t.lastKnownModified || null,
       })
     );
-    const target = tabs.find((t) => t.id === savedActiveId) || tabs[0];
-    switchTab(target.id);
-    setStatus("前回のタブを復元しました");
-  } else {
+
+    if (fileAlreadyLoaded) {
+      // すでにファイルが開いている場合はバックグラウンドで過去タブを追加復元する
+      tabs = [...tabs, ...restoredTabs];
+      renderTabs();
+    } else {
+      tabs = restoredTabs;
+      const target = tabs.find((t) => t.id === savedActiveId) || tabs[0];
+      switchTab(target.id);
+      setStatus("前回のタブを復元しました");
+    }
+  } else if (!fileAlreadyLoaded) {
+    // ファイルが開かれておらず、復元データもない場合のみ空タブを作成
     const first = makeTab({});
     tabs.push(first);
     switchTab(first.id);
@@ -929,14 +939,16 @@ async function openFileHandleInNewTab(handle) {
     const buffer = await file.arrayBuffer();
     const { text, encoding } = decodeBuffer(buffer);
 
-    const blank = tabs.find((t) => !t.fileHandle && !t.isDirty && t.content === "" && t.id !== activeTabId);
-    const activeIsBlank = getActiveTab() && !getActiveTab().fileHandle && !getActiveTab().isDirty && getActiveTab().content === "" && tabs.length === 1;
+    // 未編集の空タブがあればそれを上書き利用する
+    const activeTab = getActiveTab();
+    const activeIsBlank = activeTab && !activeTab.fileHandle && !activeTab.isDirty && activeTab.content === "";
+    const unusedBlankTab = tabs.find((t) => !t.fileHandle && !t.isDirty && t.content === "");
 
     let tab;
     if (activeIsBlank) {
-      tab = getActiveTab();
-    } else if (blank) {
-      tab = blank;
+      tab = activeTab;
+    } else if (unusedBlankTab) {
+      tab = unusedBlankTab;
     } else {
       tab = makeTab({ name: file.name });
       tabs.push(tab);
