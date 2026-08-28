@@ -401,7 +401,7 @@ function saveEditorStateToTab(tab) {
 async function switchTab(id) {
   const current = getActiveTab();
   
-  // 【修正点】別のタブへ切替える時のみ現在の画面状態を保存する（同じタブの場合は上書き保存をスキップ）
+  // 別のタブへ切替える時のみ現在の画面状態を保存する
   if (current && current.id !== id) {
     saveEditorStateToTab(current);
   }
@@ -483,17 +483,6 @@ function closeTab(id) {
   scheduleSaveSession();
 }
 
-  const idx = tabs.findIndex((t) => t.id === id);
-  tabs.splice(idx, 1);
-
-  if (activeTabId === id) {
-    const nextIdx = Math.min(idx, tabs.length - 1);
-    switchTab(tabs[nextIdx].id);
-  } else {
-    renderTabs();
-  }
-  scheduleSaveSession();
-}
 addTabBtn.addEventListener("click", createNewTab);
 newBtn.addEventListener("click", createNewTab);
 
