@@ -151,7 +151,11 @@ async function init() {
   registerServiceWorker();
   bindStaticEvents();
 
-  // OS / Chromebook からファイルが開かれた時の受け取り処理（最優先で登録）
+  // 1. まず過去のセッション（前回のタブ）の復元を完了させる
+  await restoreSession();
+  renderRecentMenu();
+
+  // 2. 復元完了後に OS（Chromebook）からのファイル受取処理（launchQueue）を登録する
   if ("launchQueue" in window) {
     window.launchQueue.setConsumer(async (launchParams) => {
       if (!launchParams.files || launchParams.files.length === 0) return;
@@ -160,9 +164,6 @@ async function init() {
       }
     });
   }
-
-  await restoreSession();
-  renderRecentMenu();
 
   window.addEventListener("focus", () => {
     const tab = getActiveTab();
@@ -178,7 +179,6 @@ function registerServiceWorker() {
 
 // ===================== セッション復元 =====================
 async function restoreSession() {
-  const fileAlreadyLoaded = tabs.length > 0;
   const saved = await dbGet("tabs");
   const savedActiveId = await dbGet("activeTabId");
 
@@ -195,9 +195,7 @@ async function restoreSession() {
         lastKnownModified: t.lastKnownModified || null,
       })
     );
-
-    if (fileAlreadyLoaded) {
-      // すでにファイルが開いている場合はバックグラウンドで過去タブを追加復元する
+    if (tabs.length > 0) {
       tabs = [...tabs, ...restoredTabs];
       renderTabs();
     } else {
@@ -206,8 +204,8 @@ async function restoreSession() {
       switchTab(target.id);
       setStatus("前回のタブを復元しました");
     }
-  } else if (!fileAlreadyLoaded) {
-    // ファイルが開かれておらず、復元データもない場合のみ空タブを作成
+  } else if (tabs.length === 0) {
+    // 復元データもなくタブが1つもない場合のみ「無題のファイル」を作成
     const first = makeTab({});
     tabs.push(first);
     switchTab(first.id);
