@@ -451,17 +451,37 @@ function closeTab(id) {
   // 最後の1つのタブを閉じる場合
   if (tabs.length === 1) {
     tab.isDirty = false;
+    tabs = [];
+    renderTabs();
+    editor.value = "";
+    updateGutter();
+    updateCounters();
+    
+    // セッション状態をクリア
     dbSet("tabs", []);
+    dbSet("activeTabId", null);
+
+    // ウィンドウを閉じる
     window.close();
 
-    // OS制限で window.close() がブロックされた場合は、画面上のタブを新規の空タブにリセットする
+    // OSやブラウザのセキュリティ制限で window.close() がブロックされた場合のみメッセージ表示
     setTimeout(() => {
-      tabs = [];
-      createNewTab();
-      setStatus("新規ファイルを作成しました");
-    }, 150);
+      setStatus("ウィンドウを閉じるには右上の「×」ボタンを押してください", true);
+    }, 300);
     return;
   }
+
+  const idx = tabs.findIndex((t) => t.id === id);
+  tabs.splice(idx, 1);
+
+  if (activeTabId === id) {
+    const nextIdx = Math.min(idx, tabs.length - 1);
+    switchTab(tabs[nextIdx].id);
+  } else {
+    renderTabs();
+  }
+  scheduleSaveSession();
+}
 
   const idx = tabs.findIndex((t) => t.id === id);
   tabs.splice(idx, 1);
