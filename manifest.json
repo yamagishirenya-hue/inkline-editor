@@ -21,7 +21,9 @@
         "text/markdown": [".md", ".markdown"],
         "text/csv": [".csv"],
         "application/json": [".json"],
-        "text/x-log": [".log"]
+        "text/x-log": [".log"],
+        "text/html": [".html", ".htm"],
+        "text/javascript": [".js", ".mjs"]
       },
       "icons": [
         { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }
