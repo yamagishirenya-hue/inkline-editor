@@ -26,7 +26,8 @@
         "application/json": [".json"],
         "text/x-log": [".log"],
         "text/html": [".html", ".htm"],
-        "text/javascript": [".js", ".mjs"]
+        "text/javascript": [".js", ".mjs"],
+        "text/css": [".css"]
       },
       "icons": [
         { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }
